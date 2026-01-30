@@ -1,58 +1,55 @@
-import { dbPromise } from '../db.js';
+import { pool } from '../db.js';
 
 const MAX_BACKUPS = 3;
 
 export async function saveBackup(deviceId, timestamp, data) {
-  const db = await dbPromise;
-
-  await db.run(
+  await pool.query(
     `
     INSERT INTO backups (device_id, created_at, payload)
-    VALUES (?, ?, ?)
+    VALUES ($1, $2, $3)
     `,
-    deviceId,
-    timestamp,
-    JSON.stringify(data)
+    [deviceId, timestamp, data]
   );
 
-  const backups = await db.all(
+  const { rows } = await pool.query(
     `
-    SELECT id FROM backups
-    WHERE device_id = ?
+    SELECT id
+    FROM backups
+    WHERE device_id = $1
     ORDER BY created_at DESC
     `,
-    deviceId
+    [deviceId]
   );
 
-  if (backups.length > MAX_BACKUPS) {
-    const idsToDelete = backups.slice(MAX_BACKUPS).map(b => b.id);
-    const placeholders = idsToDelete.map(() => '?').join(',');
+  if (rows.length > MAX_BACKUPS) {
+    const idsToDelete = rows.slice(MAX_BACKUPS).map(r => r.id);
 
-    await db.run(
-      `DELETE FROM backups WHERE id IN (${placeholders})`,
-      idsToDelete
+    await pool.query(
+      `
+      DELETE FROM backups
+      WHERE id = ANY($1)
+      `,
+      [idsToDelete]
     );
   }
 }
 
 export async function getLatestBackup(deviceId) {
-  const db = await dbPromise;
-
-  const row = await db.get(
+  const { rows } = await pool.query(
     `
     SELECT payload, created_at
     FROM backups
-    WHERE device_id = ?
+    WHERE device_id = $1
     ORDER BY created_at DESC
     LIMIT 1
     `,
-    deviceId
+    [deviceId]
   );
 
-  if (!row) return null;
+  if (rows.length === 0) return null;
 
   return {
-    createdAt: row.created_at,
-    data: JSON.parse(row.payload)
+    createdAt: rows[0].created_at,
+    data: rows[0].payload
   };
 }
